@@ -29,11 +29,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # Do not let the action request the obsolete standalone "tools" package.
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          # The setup action expects a comma-separated list, not a YAML multiline list.
+          # Request only current SDK packages; the obsolete standalone "tools" package is not available.
+          packages: "platform-tools, platforms;android-35, build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
