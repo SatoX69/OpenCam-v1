@@ -1,0 +1,131 @@
+name: Build OpenLens APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check source structure and module metadata
+        run: python3 scripts/check_source.py
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android compile SDK and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Compile and package release variant
+        run: gradle --no-daemon clean assembleRelease
+
+      - name: Prepare signing keystore
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.OPENLENS_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.OPENLENS_KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.OPENLENS_KEY_ALIAS }}
+          KEY_PASSWORD_SECRET: ${{ secrets.OPENLENS_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/openlens-signing" dist
+          if [[ -n "${KEYSTORE_B64:-}" && -n "${STORE_PASSWORD:-}" && -n "${KEY_ALIAS_SECRET:-}" ]]; then
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/openlens-signing/release.jks"
+            echo "KEY_ALIAS=$KEY_ALIAS_SECRET" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${KEY_PASSWORD_SECRET:-$STORE_PASSWORD}" >> "$GITHUB_ENV"
+            echo "SIGNING_MODE=stable" >> "$GITHUB_ENV"
+            echo "mode=stable" >> "$GITHUB_OUTPUT"
+            echo "Using the configured persistent release key." >> "$GITHUB_STEP_SUMMARY"
+          else
+            EPHEMERAL_PASSWORD="$(openssl rand -hex 24)"
+            keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/openlens-signing/release.jks" -storetype JKS \
+              -alias openlens-ephemeral -keyalg RSA -keysize 3072 -validity 10000 \
+              -dname "CN=OpenLens Ephemeral CI Signing, O=OpenLens, C=ZZ" \
+              -storepass "$EPHEMERAL_PASSWORD" -keypass "$EPHEMERAL_PASSWORD"
+            echo "KEY_ALIAS=openlens-ephemeral" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$EPHEMERAL_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$EPHEMERAL_PASSWORD" >> "$GITHUB_ENV"
+            echo "SIGNING_MODE=ephemeral" >> "$GITHUB_ENV"
+            echo "mode=ephemeral" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Signing warning"
+              echo "This build uses a one-run temporary key because stable signing secrets were not configured. The APK installs, but a later build signed with a different key cannot update it in place. Configure the four `OPENLENS_*` repository secrets before publishing stable tagged releases. The private key is not uploaded."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Sign APK and create checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNSIGNED="$(find app/build/outputs/apk/release -maxdepth 1 -name '*-unsigned.apk' -print -quit)"
+          if [[ -z "$UNSIGNED" ]]; then
+            echo "Gradle did not produce an unsigned release APK." >&2
+            find app/build/outputs/apk -type f -maxdepth 4 -print >&2 || true
+            exit 1
+          fi
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          if [[ -z "$APKSIGNER" ]]; then echo "Android apksigner was not found." >&2; exit 1; fi
+          "$APKSIGNER" sign \
+            --ks "$RUNNER_TEMP/openlens-signing/release.jks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out dist/openlens-release.apk "$UNSIGNED"
+          "$APKSIGNER" verify --verbose --print-certs dist/openlens-release.apk
+          unzip -t dist/openlens-release.apk
+          for required in META-INF/xposed/java_init.list META-INF/xposed/module.prop META-INF/xposed/scope.list; do
+            unzip -Z1 dist/openlens-release.apk | grep -Fxq "$required" || { echo "Missing Xposed metadata: $required" >&2; exit 1; }
+          done
+          sha256sum dist/openlens-release.apk > dist/SHA256SUMS
+          printf 'Signing mode: %s\nVersion: 0.3.0-beta\n' "$SIGNING_MODE" > dist/signing-info.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlens-release-${{ github.run_number }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release for version tags
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' && steps.signing.outputs.mode == 'stable'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenLens ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/openlens-release.apk
+            dist/SHA256SUMS
+            dist/signing-info.txt
+
+      - name: Explain why tagged release publication was skipped
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' && steps.signing.outputs.mode != 'stable'
+        run: |
+          echo "::warning::A signed APK artifact was built, but the GitHub Release was not published because a persistent signing key is required for upgrade-compatible releases."
+          {
+            echo "### Tagged release not published"
+            echo "The signed APK is available as a workflow artifact. Configure the four persistent `OPENLENS_*` signing secrets and rerun the tag workflow to publish a GitHub Release."
+          } >> "$GITHUB_STEP_SUMMARY"

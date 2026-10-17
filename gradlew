@@ -15,6 +15,21 @@ if [ ! -x "$GRADLE_BIN" ]; then
     echo "curl or wget is required to download Gradle." >&2
     exit 1
   fi
+  EXPECTED_SHA256="f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_SHA256="$(sha256sum "$ZIP" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA256="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+  else
+    echo "sha256sum or shasum is required to verify the Gradle download." >&2
+    rm -f "$ZIP"
+    exit 1
+  fi
+  if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+    echo "Gradle distribution checksum mismatch; refusing to execute it." >&2
+    rm -f "$ZIP"
+    exit 1
+  fi
   if command -v unzip >/dev/null 2>&1; then
     unzip -q -o "$ZIP" -d "$CACHE_DIR"
   else

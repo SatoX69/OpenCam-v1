@@ -92,7 +92,7 @@ public final class MainActivity extends Activity {
 
         TextView title = text("OpenLens", 30, true, Color.WHITE);
         page.addView(title);
-        TextView subtitle = text("Local media source for scoped camera callbacks", 14, false, 0xffaab4c3);
+        TextView subtitle = text("Scoped camera preview and capture replacement", 14, false, 0xffaab4c3);
         LinearLayout.LayoutParams subLp = params(-1, -2);
         subLp.topMargin = dp(4);
         page.addView(subtitle, subLp);
@@ -137,7 +137,7 @@ public final class MainActivity extends Activity {
         chooseVideoButton.setOnClickListener(v -> openPicker("video/*", PICK_VIDEO));
 
         section(page, "02  TARGET APPS");
-        TextView targetNote = text("Select each app here and enable the same package in your Xposed manager's module scope. Only Camera1 NV21 preview callbacks are replaced by this build.", 13, false, 0xffaab4c3);
+        TextView targetNote = text("Select each target app here and enable the same package in LSPosed/Vector scope. Adapters cover common Camera1 callbacks, recognized Camera1/Camera2 preview surfaces, and CPU-visible ImageReader planes. Unsupported native or protected paths pass through.", 13, false, 0xffaab4c3);
         LinearLayout.LayoutParams targetNoteLp = params(-1, -2);
         targetNoteLp.topMargin = dp(7);
         page.addView(targetNote, targetNoteLp);
@@ -163,7 +163,7 @@ public final class MainActivity extends Activity {
         enableButton.setOnClickListener(v -> enableReplacement());
         disableButton.setOnClickListener(v -> disableReplacement());
 
-        TextView disclaimer = text("Compatibility note: Camera2, CameraX, direct Surface/Texture previews, still-photo capture, and apps using native camera pipelines are not replaced by this adapter. This is an experimental open-source baseline, not a universal virtual camera.", 12, false, 0xffe0b58b);
+        TextView disclaimer = text("Experimental compatibility: CameraX may work through its Camera2 surface/image path. Camera1 callbacks include NV21/YV12/YUY2/RGB565; ImageReader supports common flexible YUV, Y8, P010, and JPEG buffers. Private/native buffers, RAW, protected outputs, and vendor-specific paths may remain physical. Reopen the camera after enabling.", 12, false, 0xffe0b58b);
         LinearLayout.LayoutParams disclaimerLp = params(-1, -2);
         disclaimerLp.topMargin = dp(16);
         page.addView(disclaimer, disclaimerLp);
@@ -444,7 +444,7 @@ public final class MainActivity extends Activity {
     private void refreshStateUi() {
         if (modeStatus == null) return;
         modeStatus.setText(enabled
-                ? "State: ENABLED · hooked Camera1 callbacks use the selected source"
+                ? "State: ENABLED · compatible callbacks, surfaces and image planes use the selected source"
                 : "State: DISABLED · physical camera data passes through");
         modeStatus.setTextColor(enabled ? 0xff8ddea8 : 0xffaab4c3);
         if (chooseImageButton != null) chooseImageButton.setEnabled(!enabled);
