@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">OpenLens</string>
+    <string name="module_description">Open-source experimental Camera1 preview callback media replacement</string>
+</resources>
